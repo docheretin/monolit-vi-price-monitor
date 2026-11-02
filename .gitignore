@@ -1,0 +1,26 @@
+# Секреты — НИКОГДА не коммитить
+abacusai_auth_secrets.json
+*.env
+.env
+secrets.json
+
+# Генерируемые данные и артефакты
+*.xlsx
+*.xls
+*.log
+*.html
+summary.json
+price_history.json
+vi_fresh.json
+exit_code.txt
+
+# Временные файлы скрейпинга
+tmp/
+pdump/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
