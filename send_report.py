@@ -31,7 +31,9 @@ def _creds():
     sec=blk.get('secrets',{})
     def g(k):
         v=sec.get(k); return (v.get('value') if isinstance(v,dict) else v)
-    return g('smtp_host'), g('smtp_user'), g('smtp_password')
+    # Mail.ru требует пароль приложения для SMTP. Используем imap_password
+    # (пароль приложения, уже проверен), с запасным вариантом на smtp_password.
+    return g('smtp_host'), g('smtp_user'), (g('imap_password') or g('smtp_password'))
 
 def _imap_creds():
     """IMAP-доступ для сохранения копий в «Отправленные».
