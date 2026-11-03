@@ -108,17 +108,17 @@ for it in mono_site:
 hist=json.load(open(HIST)) if os.path.exists(HIST) else {}
 def dyn(code,cp,cdd,cdt):
     recs=hist.get(code,[]); prev=[r for r in recs if r['date']!=DATE]
-    if not prev: return 'первый замер','первый замер','—'
+    if not prev: return 'первый замер','первый замер','-'
     p=prev[-1]
-    if cp is None or p.get('vi_price') is None: pr='—'
+    if cp is None or p.get('vi_price') is None: pr='-'
     elif cp<p['vi_price']: pr=f"↓ дешевле на {round((p['vi_price']-cp)/p['vi_price']*100)}% (было {p['vi_price']})"
     elif cp>p['vi_price']: pr=f"↑ дороже на {round((cp-p['vi_price'])/p['vi_price']*100)}% (было {p['vi_price']})"
-    else: pr='= без изменений'
+    else: pr='- без изменений'
     def nz(d): return 9999 if d is None else d
     cd,pd=nz(cdd),nz(p.get('dd'))
     if cd<pd: dl=f"↓ быстрее (было: {p.get('dtxt')}"+(f", {p.get('dd')} дн.)" if p.get('dd') is not None else ")")
     elif cd>pd: dl=f"↑ дольше (было: {p.get('dtxt')}"+(f", {p.get('dd')} дн.)" if p.get('dd') is not None else ")")
-    else: dl='= без изменений'
+    else: dl='- без изменений'
     sc=0
     if cp is not None and p.get('vi_price') is not None: sc+=-1 if cp<p['vi_price'] else(1 if cp>p['vi_price'] else 0)
     sc+=-1 if cd<pd else(1 if cd>pd else 0)
@@ -136,7 +136,7 @@ def fmt_dd(r):
     if r['dtxt']=='в наличии': return 'В наличии (0 дн.)'
     if r['dtxt']=='под заказ': return f"Под заказ (~{r['dd']} дн.)"
     if r['dtxt']=='нет в наличии': return 'Нет в наличии'
-    return '—'
+    return '-'
 wb=Workbook(); ws=wb.active; ws.title='Сравнение цен'
 hdr=['Артикул','Наименование (МОНОЛИТ РУС)','Цена МОНОЛИТ РУС, ₽','Ед.','Наименование на ВсеИнструменты','Цена ВИ, ₽','Разница %','Наличие на ВсеИнструменты','Срок поставки','Динамика цены ВИ','Динамика срока','Итог vs прошлый замер','Ссылка на товар','Код ВИ']
 hfill=PatternFill('solid',fgColor='2F5496');hfont=Font(bold=True,color='FFFFFF',size=10)
@@ -144,12 +144,12 @@ sec=PatternFill('solid',fgColor='D9E1F2');secf=Font(bold=True,size=11)
 thin=Side(style='thin',color='BBBBBB');bd=Border(left=thin,right=thin,top=thin,bottom=thin)
 r=1
 ws.cell(r,1,'Сравнение цен поставщика МОНОЛИТ РУС и ВсеИнструменты (vseinstrumenti.ru, Москва)').font=Font(bold=True,size=13);r+=1
-ws.cell(r,1,f'Замер {DATE}. Цены/наличие ВИ — базовая розница. Отрицательная разница = поставщик дешевле. «⚠ проверить ед. изм.» — цена поставщика за шт. из упаковки, сравнение с розничной шт. может быть некорректным. Динамика — к предыдущему замеру (история ведётся автоматически).').font=Font(italic=True,size=9,color='666666');r+=2
+ws.cell(r,1,f'Замер {DATE}. Цены/наличие ВИ - базовая розница. Отрицательная разница = поставщик дешевле. «⚠ проверить ед. изм.» - цена поставщика за шт. из упаковки, сравнение с розничной шт. может быть некорректным. Динамика - к предыдущему замеру (история ведётся автоматически).').font=Font(italic=True,size=9,color='666666');r+=2
 def cdyn(c,v):
     if isinstance(v,str):
         if v.startswith('↓') or v=='ЛУЧШЕ': c.font=Font(color='006100',bold=(v=='ЛУЧШЕ'))
         elif v.startswith('↑') or v=='ХУЖЕ': c.font=Font(color='C00000',bold=(v=='ХУЖЕ'))
-        elif 'первый замер' in v or v=='без изменений' or v.startswith('='): c.font=Font(color='808080')
+        elif 'первый замер' in v or 'без изменений' in v or v.startswith('='): c.font=Font(color='808080')
 def section(title,rows):
     global r
     ws.cell(r,1,title).font=secf
@@ -207,13 +207,13 @@ GRN='006100';RED='C00000';GRY='808080'
 def delta_cell(cur_v,prev_v,lower_better,fmt='{:+.1f}'):
     if prev_v is None: return 'первый замер',GRY
     d=cur_v-prev_v
-    if abs(d)<1e-9: return '= без изменений',GRY
+    if abs(d)<1e-9: return '- без изменений',GRY
     good=(d<0) if lower_better else (d>0)
     arrow='↓' if d<0 else '↑'
     return f"{arrow} {fmt.format(d)}",(GRN if good else RED)
 R=1
-sm.cell(R,1,'Сводный индекс наличия и цен — МОНОЛИТ РУС vs ВсеИнструменты').font=Font(bold=True,size=13);R+=1
-sm.cell(R,1,f'Замер {DATE}. Индекс наличия 0–100: «в наличии»=100, «под заказ»=50, «нет в наличии»=0 (выше — лучше). Δ — изменение к предыдущему замеру; история и графики заполняются автоматически при каждом запуске.').font=Font(italic=True,size=9,color='666666');R+=2
+sm.cell(R,1,'Сводный индекс наличия и цен - МОНОЛИТ РУС vs ВсеИнструменты').font=Font(bold=True,size=13);R+=1
+sm.cell(R,1,f'Замер {DATE}. Индекс наличия 0–100: «в наличии»=100, «под заказ»=50, «нет в наличии»=0 (выше - лучше). Δ - изменение к предыдущему замеру; история и графики заполняются автоматически при каждом запуске.').font=Font(italic=True,size=9,color='666666');R+=2
 # dashboard
 dhdr=['Показатель','Текущий замер','Прошлый замер','Δ к прошлому','Куда лучше']
 hfill2=PatternFill('solid',fgColor='2F5496')
@@ -224,7 +224,7 @@ def pf(v): return f"{v:.1f}"
 rows_db=[
  ('Индекс наличия (0–100)', cu['idx'], pv['idx'] if pv else None, pf(cu['idx']), False, 'выше'),
  ('Доля «в наличии», %', cu['p_ins'], pv['p_ins'] if pv else None, f"{cu['p_ins']:.0f}%", False, 'выше'),
- ('Доля «под заказ», %', cu['p_order'], pv['p_order'] if pv else None, f"{cu['p_order']:.0f}%", None, '—'),
+ ('Доля «под заказ», %', cu['p_order'], pv['p_order'] if pv else None, f"{cu['p_order']:.0f}%", None, '-'),
  ('Доля «нет в наличии», %', cu['p_none'], pv['p_none'] if pv else None, f"{cu['p_none']:.0f}%", True, 'ниже'),
  ('Средний срок поставки, дн.', cu['avgdd'], pv['avgdd'] if pv else None, f"{cu['avgdd']:.1f}", True, 'ниже'),
  ('Средняя разница цены vs ВИ, %', cu['avgdiff'], pv['avgdiff'] if pv else None, f"{cu['avgdiff']:.1f}%", True, 'ниже (поставщик дешевле)'),
@@ -232,7 +232,7 @@ rows_db=[
 for name,cv,prv,curtxt,lb,direction in rows_db:
     sm.cell(R,1,name).border=bd
     sm.cell(R,2,curtxt).border=bd
-    sm.cell(R,3,('%.1f'%prv if prv is not None else '—')).border=bd
+    sm.cell(R,3,('%.1f'%prv if prv is not None else '-')).border=bd
     if lb is None:
         dtxt,col=('первый замер' if prv is None else f"{cv-prv:+.1f}"),GRY
     else:
@@ -243,7 +243,7 @@ for name,cv,prv,curtxt,lb,direction in rows_db:
 R+=1
 # overall verdict
 if pv is None:
-    verdict='Первый замер — это базовая точка. Со следующего запуска здесь появится оценка «ситуация улучшилась / ухудшилась».';vcol=GRY
+    verdict='Первый замер - это базовая точка. Со следующего запуска здесь появится оценка «ситуация улучшилась / ухудшилась».';vcol=GRY
 else:
     sc=0
     sc+= -1 if cu['idx']>pv['idx'] else(1 if cu['idx']<pv['idx'] else 0)
@@ -274,7 +274,7 @@ sm.add_chart(ch1,f'A{data_last+3}')
 ch2=LineChart();ch2.title='Структура наличия, %';ch2.height=7;ch2.width=14
 ch2.add_data(Reference(sm,min_col=3,max_col=5,min_row=thead_row,max_row=data_last),titles_from_data=True);ch2.set_categories(cats)
 sm.add_chart(ch2,f'A{data_last+18}')
-ch3=LineChart();ch3.title='Средний срок поставки, дн. (ниже — лучше)';ch3.height=7;ch3.width=14
+ch3=LineChart();ch3.title='Средний срок поставки, дн. (ниже - лучше)';ch3.height=7;ch3.width=14
 ch3.add_data(Reference(sm,min_col=6,min_row=thead_row,max_row=data_last),titles_from_data=True);ch3.set_categories(cats)
 sm.add_chart(ch3,f'J{data_last+3}')
 
@@ -294,7 +294,7 @@ hs.freeze_panes='A2'
 out='/home/ubuntu/Сравнение_цен_МОНОЛИТ-РУС_vs_ВсеИнструменты.xlsx'
 wb.save(out)
 
-# ===== summary.json — для сопроводительного письма =====
+# ===== summary.json - для сопроводительного письма =====
 def _imp(x):
     return dict(name=x.get('vi_name',''), art=x.get('art',''),
                 dyn_price=x.get('dyn_price',''), dyn_deliv=x.get('dyn_deliv',''))
