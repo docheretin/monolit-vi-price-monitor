@@ -19,7 +19,7 @@ REPORT='/home/ubuntu/Сравнение_цен_МОНОЛИТ-РУС_vs_ВсеИ
 SUMMARY=os.path.join(REP,'summary.json')
 # ВТОРОЙ адрес (burkov@monolita.net) добавим только после подтверждённого
 # успешного прогона с основным адресом. Пока рассылка — только на основной.
-RECIPIENTS=['docheretin@gmail.com','burkov@monolita.net']
+RECIPIENTS=['docheretin@gmail.com','burkov@monolita.net','max@superstroy.ru','dolgoff@superstroy.ru']
 
 FROM_NAME='МОНОЛИТ РУС — мониторинг цен'
 ATTACH_NAME='Сравнение_цен_МОНОЛИТ-РУС_vs_ВсеИнструменты.xlsx'

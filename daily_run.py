@@ -7,11 +7,14 @@
 пишем в лог и выходим с кодом 2 (чтобы планировщик сообщил вам «нужно пройти капчу»).
 Иначе — обновляем цены/наличие ВИ и пересобираем отчёт (новый снимок в истории).
 """
-import os, re, json, ast, subprocess, datetime, traceback
+import os, re, json, ast, subprocess, datetime, traceback, time
 
 TMP='/home/ubuntu/tmp'; REP='/home/ubuntu/monolit_vi_report'
 LOG=os.path.join(REP,'daily_run.log')
 CDP="http://localhost:9222"
+CDP_PORT=9222
+CHROME_PROFILE='/home/ubuntu/.chrome-mono'   # постоянный «прогретый» профиль (куки/капча)
+CHROME_LOG='/home/ubuntu/chrome_cdp.log'
 
 LEIYA_PAGES=["https://www.vseinstrumenti.ru/brand/leiya-2104793/",
              "https://www.vseinstrumenti.ru/brand/leiya-2104793/page2/",
@@ -43,6 +46,52 @@ def tg_alert(msg):
         log('TG: уведомление о капче отправлено')
     except Exception as e:
         log(f'TG: не удалось отправить уведомление: {type(e).__name__} {str(e)[:120]}')
+
+def _cdp_alive():
+    """True, если CDP на порту 9222 отвечает."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f'http://localhost:{CDP_PORT}/json/version', timeout=5) as r:
+            return r.status==200
+    except Exception:
+        return False
+
+def ensure_chrome():
+    """Если Chrome с CDP на 9222 не поднят — запускаем его сами (headful, постоянный профиль).
+    Возвращает True, если к концу CDP отвечает. Не роняет прогон — только логирует."""
+    if _cdp_alive():
+        log("Chrome(CDP:9222) уже запущен — переиспользую сессию")
+        return True
+    log("Chrome(CDP:9222) не запущен — поднимаю сам")
+    env=dict(os.environ)
+    if not env.get('DISPLAY'):
+        # выбираем активный X-дисплей из /tmp/.X11-unix (например, :99), иначе :0
+        disp=':0'
+        try:
+            for n in sorted(os.listdir('/tmp/.X11-unix')):
+                if n.startswith('X') and n[1:].isdigit():
+                    disp=':'+n[1:]; break
+        except Exception: pass
+        env['DISPLAY']=disp
+    log(f"DISPLAY={env.get('DISPLAY')}")
+    cmd=['google-chrome-stable','--no-sandbox','--disable-gpu',
+         f'--remote-debugging-port={CDP_PORT}', f'--user-data-dir={CHROME_PROFILE}',
+         '--no-first-run','--no-default-browser-check','--disable-background-networking']
+    try:
+        with open(CHROME_LOG,'a') as lf:
+            subprocess.Popen(cmd, stdout=lf, stderr=lf, env=env,
+                             start_new_session=True)
+    except Exception as e:
+        log(f"Не удалось запустить Chrome: {type(e).__name__} {str(e)[:150]}")
+        return False
+    # ждём до ~30 c, пока CDP оживёт
+    for _ in range(30):
+        time.sleep(1)
+        if _cdp_alive():
+            log("Chrome поднят, CDP отвечает")
+            return True
+    log("Chrome запущен, но CDP не ответил за 30 c")
+    return False
 
 def looks_blocked(title, body):
     t=(title or '').lower(); b=(body or '').lower()
@@ -88,6 +137,13 @@ def scrape_page(ctx, url):
 def main():
     from playwright.sync_api import sync_playwright
     log("=== старт ежедневного прогона ===")
+    # Автоподъём браузера: если Chrome с CDP на 9222 не запущен (типично при
+    # автозапуске по расписанию) — поднимаем сами, чтобы не падать с ECONNREFUSED.
+    if not ensure_chrome():
+        log("Браузер недоступен (CDP:9222 не отвечает). Прекращаю без перезаписи данных.")
+        tg_alert("\u26a0\ufe0f Отчёт МОНОЛИТ vs ВсеИнструменты: не удалось запустить браузер "
+                 "для сбора цен (CDP:9222 не поднялся). Зайдите на рабочую машину и проверьте Chrome.")
+        return 2
     all_prod={}; mono_prod=[]
     with sync_playwright() as p:
         b=p.chromium.connect_over_cdp(CDP)
