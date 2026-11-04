@@ -4,7 +4,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.chart import LineChart, Reference
 
-TMP='/home/ubuntu/tmp'; REP='/home/ubuntu/monolit_vi_report'
+from common import TMP, REP, XLSX
+
 HIST=os.path.join(REP,'price_history.json')
 # Дата замера: берётся из окружения (ежедневный прогон) либо = сегодня
 _env=os.environ.get('REPORT_DATE')
@@ -291,7 +292,7 @@ for code,recs in hist.items():
         rr+=1
 for c,w in enumerate([13,11,13,44,12,16,9,20],1): hs.column_dimensions[chr(64+c)].width=w
 hs.freeze_panes='A2'
-out='/home/ubuntu/Сравнение_цен_МОНОЛИТ-РУС_vs_ВсеИнструменты.xlsx'
+out=str(XLSX)
 wb.save(out)
 
 # ===== summary.json - для сопроводительного письма =====

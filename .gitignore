@@ -17,6 +17,9 @@ exit_code.txt
 # Временные файлы скрейпинга
 tmp/
 pdump/
+captcha/
+tg_state.json
+*.tmp
 
 # Python
 __pycache__/

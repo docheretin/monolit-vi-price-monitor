@@ -14,8 +14,9 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from email.utils import formataddr, formatdate, make_msgid
 
-REP='/home/ubuntu/monolit_vi_report'
-REPORT='/home/ubuntu/Сравнение_цен_МОНОЛИТ-РУС_vs_ВсеИнструменты.xlsx'
+from common import APP_DIR, REP, XLSX, secret_file
+
+REPORT=str(XLSX)
 SUMMARY=os.path.join(REP,'summary.json')
 # ВТОРОЙ адрес (burkov@monolita.net) добавим только после подтверждённого
 # успешного прогона с основным адресом. Пока рассылка — только на основной.
@@ -23,7 +24,7 @@ RECIPIENTS=['docheretin@gmail.com','burkov@monolita.net','max@superstroy.ru','do
 
 FROM_NAME='МОНОЛИТ РУС — мониторинг цен'
 ATTACH_NAME='Сравнение_цен_МОНОЛИТ-РУС_vs_ВсеИнструменты.xlsx'
-SECRETS='/home/ubuntu/.config/abacusai_auth_secrets.json'
+SECRETS=str(secret_file() or (APP_DIR / 'secrets.json'))
 
 def _creds():
     d=json.load(open(SECRETS))
