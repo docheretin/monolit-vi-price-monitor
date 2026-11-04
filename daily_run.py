@@ -105,50 +105,118 @@ def ensure_chrome():
     log("Chrome запущен, но CDP не ответил за 30 c")
     return False
 
-def looks_blocked(title, body):
-    t=(title or '').lower(); b=(body or '').lower()
-    for k in ('captcha','доступ ограничен','подтвердите','robot','проверка','ddos','too many requests'):
-        if k in t or k in b: return True
-    return False
+# Сбор данных делаем НЕ навигацией (page.goto), а внутристраничным fetch() на том же
+# origin — обычный XHR в уже «прогретой» (пройдена капча) сессии капчу не триггерит.
+# fetch возвращает серверный HTML страницы, который тут же парсим через DOMParser.
+FETCH_JS = r"""
+async ({url, timeout}) => {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), timeout || 45000);
+  let html = '', status = 0, ferr = '';
+  try {
+    const r = await fetch(url, {credentials:'include', redirect:'follow',
+                               headers:{'Accept':'text/html,application/xhtml+xml'}, signal:ctrl.signal});
+    status = r.status; html = await r.text();
+  } catch(e) { ferr = String(e); }
+  finally { clearTimeout(tid); }
+  const low = html.toLowerCase();
+  // признаки анти-бота/капчи ВИ (ServicePipe js-challenge + Yandex SmartCaptcha)
+  const challenge = ['js-challenge','servicepipe','smartcaptcha','checkbox-captcha',
+                     'spinner-loader','разверните картинк','подтвердите, что вы не робот',
+                     'доступ ограничен'].some(k => low.includes(k));
+  let products = [], tiles = -1, perr = '';
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const nodes = Array.from(doc.querySelectorAll('[data-qa="products-tile"]'));
+    tiles = nodes.length;
+    const q = (t,s) => { const e = t.querySelector(s); return e ? e.textContent.trim() : ''; };
+    for (const t of nodes) {
+      const link = t.querySelector('a[href*="/product"]');
+      let href = link ? link.getAttribute('href') : '';
+      if (href && href.startsWith('/')) href = 'https://www.vseinstrumenti.ru' + href;
+      products.push({code:q(t,'[data-qa="product-code-value"]'),
+                     name:q(t,'[data-qa="product-name"]'),
+                     price:q(t,'[data-qa="product-price-current"]'),
+                     status:q(t,'[data-qa="product-availability"]') || 'Нет в наличии',
+                     url:(href || '').split('#')[0]});
+    }
+  } catch(e) { perr = String(e); }
+  const blocked = ferr !== '' || status === 403 || status === 429 || status === 0 || challenge;
+  return {blocked, status, tiles, len:html.length, ferr, perr, products};
+}
+"""
 
-def scrape_page(ctx, url):
-    """Возвращает (list_of_products, blocked_bool). product={code,name,price,status,url}"""
-    pg=ctx.new_page()
-    try:
-        # Маскируем признаки автоматизации (webdriver и пр.) — ведём себя как обычный браузер.
+def _vi_page(ctx):
+    """Берём уже открытую вкладку на vseinstrumenti.ru (её origin/куки нужны для fetch)."""
+    for pg in ctx.pages:
         try:
-            pg.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
-        except Exception: pass
+            if 'vseinstrumenti.ru' in (pg.url or ''):
+                return pg
+        except Exception:
+            pass
+    return ctx.pages[0] if ctx.pages else ctx.new_page()
+
+def _scrape_dom(ctx, url):
+    """Резерв: читаем товары из DOM через навигацию (goto). Безопасно только в уже
+    пройденной (cleared) сессии — там goto не вызывает новой капчи."""
+    pg = ctx.new_page()
+    try:
         pg.goto(url, wait_until="domcontentloaded", timeout=60000)
         pg.wait_for_timeout(3500)
-        # прокрутка для подгрузки ленивых плиток
         for _ in range(6):
             pg.mouse.wheel(0, 2200); pg.wait_for_timeout(600)
-        title=pg.title(); body=pg.inner_text("body")[:3000]
-        tiles=pg.query_selector_all('[data-qa="products-tile"]')
-        if looks_blocked(title, body):
+        title = (pg.title() or '').lower(); body = pg.inner_text("body")[:3000].lower()
+        if any(k in title or k in body for k in
+               ('captcha','доступ ограничен','подтвердите','robot','проверка','разверните картинк')):
             return [], True
-        out=[]
-        for t in tiles:
+        out = []
+        for t in pg.query_selector_all('[data-qa="products-tile"]'):
             def q(sel):
-                e=t.query_selector(sel); return e.inner_text().strip() if e else ''
-            name=q('[data-qa="product-name"]')
-            price=q('[data-qa="product-price-current"]')
-            code=q('[data-qa="product-code-value"]')
-            avail=q('[data-qa="product-availability"]')
-            link=t.query_selector('a[href*="/product"]')
-            href=link.get_attribute('href') if link else ''
-            if href and href.startswith('/'): href='https://www.vseinstrumenti.ru'+href
+                e = t.query_selector(sel); return e.inner_text().strip() if e else ''
+            code = q('[data-qa="product-code-value"]')
             if not code: continue
-            pint=re.sub(r'[^\d]','',price or ''); pint=int(pint) if pint else None
-            out.append(dict(code=code.strip(), name=name, price=pint,
-                            status=(avail or 'Нет в наличии'), url=(href or '').split('#')[0]))
-        # пустая выдача там, где товары должны быть — тоже считаем блокировкой
-        if not out:
-            return [], True
-        return out, False
+            price = q('[data-qa="product-price-current"]')
+            link = t.query_selector('a[href*="/product"]')
+            href = link.get_attribute('href') if link else ''
+            if href and href.startswith('/'): href = 'https://www.vseinstrumenti.ru'+href
+            pint = re.sub(r'[^\d]','',price or ''); pint = int(pint) if pint else None
+            out.append(dict(code=code, name=q('[data-qa="product-name"]'), price=pint,
+                            status=(q('[data-qa="product-availability"]') or 'Нет в наличии'),
+                            url=(href or '').split('#')[0]))
+        return (out, False) if out else ([], True)
     finally:
         pg.close()
+
+def scrape_page(ctx, url):
+    """Возвращает (list_of_products, blocked_bool). product={code,name,price,status,url}
+    Сбор через fetch() внутри живой сессии — без навигации, чтобы не ловить капчу."""
+    pg = _vi_page(ctx)
+    try:
+        res = pg.evaluate(FETCH_JS, {"url": url, "timeout": 45000})
+    except Exception as e:
+        log(f"fetch-исключение на {url}: {e}")
+        res = None
+    # Реальная капча/блокировка (403/429/js-challenge) — не ломаем отчёт, сигналим.
+    if res is None or res.get('blocked'):
+        st = res.get('status') if res else 'ERR'
+        log(f"fetch заблокирован на {url}: status={st} "
+            f"tiles={(res or {}).get('tiles')} len={(res or {}).get('len')} ferr={(res or {}).get('ferr')}")
+        return [], True
+    out = []
+    for pr in res.get('products', []):
+        code = (pr.get('code') or '').strip()
+        if not code:
+            continue
+        pint = re.sub(r'[^\d]', '', pr.get('price') or ''); pint = int(pint) if pint else None
+        out.append(dict(code=code, name=pr.get('name', ''), price=pint,
+                        status=(pr.get('status') or 'Нет в наличии'),
+                        url=(pr.get('url') or '').split('#')[0]))
+    if out:
+        return out, False
+    # fetch вернул 200 без ошибок, но товаров нет: страница могла отрисоваться
+    # на клиенте. Пробуем DOM-резерв (сессия уже пройдена — goto не даст капчи).
+    log(f"fetch 0 товаров (status={res.get('status')}, len={res.get('len')}) — пробую DOM-резерв на {url}")
+    return _scrape_dom(ctx, url)
 
 def main():
     from playwright.sync_api import sync_playwright
