@@ -1,0 +1,27 @@
+[Unit]
+Description=Постоянный "человеческий" Chrome для сбора цен ВИ (профиль .chrome-mono, CDP 9222)
+After=vm-vnc.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/home/ubuntu
+
+[Service]
+User=ubuntu
+Environment=DISPLAY=:99
+Environment=HOME=/home/ubuntu
+# Постоянный "прогретый" профиль: в нём человек один раз проходит капчу,
+# clearance (куки антибота) сохраняется и переиспользуется ночным прогоном.
+ExecStart=/usr/bin/google-chrome-stable \
+  --user-data-dir=/home/ubuntu/.chrome-mono \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
+  --disable-blink-features=AutomationControlled \
+  --no-sandbox --disable-gpu --no-first-run --no-default-browser-check \
+  --disable-background-networking --disable-features=Translate \
+  --lang=ru-RU --window-size=1024,768 \
+  --window-position=0,0 \
+  https://www.vseinstrumenti.ru/brand/leiya-2104793/
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

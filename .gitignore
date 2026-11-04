@@ -24,3 +24,4 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+.abacus.donotdelete

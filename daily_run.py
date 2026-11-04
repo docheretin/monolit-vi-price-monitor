@@ -62,7 +62,19 @@ def ensure_chrome():
     if _cdp_alive():
         log("Chrome(CDP:9222) уже запущен — переиспользую сессию")
         return True
-    log("Chrome(CDP:9222) не запущен — поднимаю сам")
+    # Основной путь: поднять постоянный systemd-сервис mono-chrome (профиль .chrome-mono,
+    # в котором человек проходит капчу; сессия сохраняется и переиспользуется).
+    try:
+        subprocess.run(['sudo','systemctl','start','mono-chrome'], timeout=30,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(30):
+            time.sleep(1)
+            if _cdp_alive():
+                log("mono-chrome (systemd) поднят, CDP отвечает")
+                return True
+    except Exception as e:
+        log(f"systemctl start mono-chrome не сработал: {type(e).__name__} {str(e)[:120]}")
+    log("Chrome(CDP:9222) не запущен — поднимаю сам (fallback)")
     env=dict(os.environ)
     if not env.get('DISPLAY'):
         # выбираем активный X-дисплей из /tmp/.X11-unix (например, :99), иначе :0
@@ -103,6 +115,10 @@ def scrape_page(ctx, url):
     """Возвращает (list_of_products, blocked_bool). product={code,name,price,status,url}"""
     pg=ctx.new_page()
     try:
+        # Маскируем признаки автоматизации (webdriver и пр.) — ведём себя как обычный браузер.
+        try:
+            pg.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined});")
+        except Exception: pass
         pg.goto(url, wait_until="domcontentloaded", timeout=60000)
         pg.wait_for_timeout(3500)
         # прокрутка для подгрузки ленивых плиток
