@@ -3,6 +3,15 @@ abacusai_auth_secrets.json
 *.env
 .env
 secrets.json
+.ingest_token
+rf_host_scraper/.env
+
+# Профиль браузера внешнего скрейпера (куки/сессия) — не коммитить
+rf_host_scraper/rf_profile/
+
+# Логи приёмника и прогона
+ingest.log
+daily_run.log
 
 # Генерируемые данные и артефакты
 *.xlsx

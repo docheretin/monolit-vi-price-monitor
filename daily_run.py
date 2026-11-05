@@ -16,6 +16,11 @@ CDP_PORT=9222
 CHROME_PROFILE='/home/ubuntu/.chrome-mono'   # постоянный «прогретый» профиль (куки/капча)
 CHROME_LOG='/home/ubuntu/chrome_cdp.log'
 
+# Приоритетный источник данных ВИ: пуш с внешнего «хорошего-IP» хоста (ingest_service).
+REMOTE_FILE=os.path.join(TMP,'vi_remote.json')
+REMOTE_MAX_AGE_HOURS=20
+REMOTE_BLOCKED=object()   # маркер: пуш пришёл, но хост поймал капчу/блок
+
 LEIYA_PAGES=["https://www.vseinstrumenti.ru/brand/leiya-2104793/",
              "https://www.vseinstrumenti.ru/brand/leiya-2104793/page2/",
              "https://www.vseinstrumenti.ru/brand/leiya-2104793/page3/"]
@@ -218,34 +223,114 @@ def scrape_page(ctx, url):
     log(f"fetch 0 товаров (status={res.get('status')}, len={res.get('len')}) — пробую DOM-резерв на {url}")
     return _scrape_dom(ctx, url)
 
+def load_remote_vi():
+    """Пытается прочитать данные ВИ, присланные (пуш) с внешнего хоста, из vi_remote.json.
+
+    Возвращает:
+      * (all_prod_dict_by_code, mono_prod_list) — если пуш валиден (товары собраны):
+          all_prod — dict {code: {code,name,price(int|null),status,url}} (как локальный скрейп),
+          mono_prod — список тех же product-словарей, чьи коды входят в mono_codes.
+      * REMOTE_BLOCKED — если пуш пришёл, но хост пометил blocked==True (капча/блок).
+      * None — если файла нет / протух (>20ч) / невалиден / товаров нет.
+    """
+    try:
+        if not os.path.exists(REMOTE_FILE):
+            return None
+        data=json.load(open(REMOTE_FILE,encoding='utf-8'))
+    except Exception as e:
+        log(f"remote: не удалось прочитать {REMOTE_FILE}: {type(e).__name__} {str(e)[:120]}")
+        return None
+    gen=data.get('generated_at')
+    # разбор generated_at (ISO8601, возможен суффикс Z)
+    ts=None
+    if gen:
+        try:
+            s=str(gen).strip().replace('Z','+00:00')
+            dt=datetime.datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt=dt.replace(tzinfo=datetime.timezone.utc)
+            ts=dt
+        except Exception:
+            ts=None
+    # если хост поймал капчу/блок — это сигнал (даже если данные устарели/пусты)
+    if data.get('blocked'):
+        log(f"remote: пуш помечен blocked=true (generated_at={gen}) — хост поймал капчу/блок")
+        return REMOTE_BLOCKED
+    if ts is None:
+        log(f"remote: generated_at не распарсился ({gen!r}) — игнорирую пуш"); return None
+    age_h=(datetime.datetime.now(datetime.timezone.utc)-ts).total_seconds()/3600.0
+    if age_h>REMOTE_MAX_AGE_HOURS:
+        log(f"remote: пуш протух ({age_h:.1f}ч > {REMOTE_MAX_AGE_HOURS}ч) — игнорирую"); return None
+    if age_h<0:
+        log(f"remote: generated_at в будущем ({gen}) — игнорирую пуш"); return None
+    products=data.get('products') or []
+    if not products:
+        log("remote: список products пуст — игнорирую пуш"); return None
+    mono_codes=set(str(c) for c in (data.get('mono_codes') or []))
+    all_prod={}; mono_prod=[]
+    for pr in products:
+        code=(pr.get('code') or '').strip()
+        if not code:
+            continue
+        price=pr.get('price')
+        if isinstance(price,str):
+            pint=re.sub(r'[^\d]','',price); price=int(pint) if pint else None
+        norm=dict(code=code, name=pr.get('name',''), price=price,
+                  status=(pr.get('status') or 'Нет в наличии'),
+                  url=(pr.get('url') or '').split('#')[0])
+        all_prod[code]=norm
+        if code in mono_codes:
+            mono_prod.append(norm)
+    if not all_prod:
+        log("remote: после нормализации нет ни одного товара с кодом — игнорирую пуш"); return None
+    log(f"remote: валиден — товаров {len(all_prod)}, Monolit-инструмент {len(mono_prod)}, "
+        f"возраст {age_h:.1f}ч, generated_at={gen}")
+    return all_prod, mono_prod
+
+
 def main():
     from playwright.sync_api import sync_playwright
     log("=== старт ежедневного прогона ===")
-    # Автоподъём браузера: если Chrome с CDP на 9222 не запущен (типично при
-    # автозапуске по расписанию) — поднимаем сами, чтобы не падать с ECONNREFUSED.
-    if not ensure_chrome():
-        log("Браузер недоступен (CDP:9222 не отвечает). Прекращаю без перезаписи данных.")
-        tg_alert("\u26a0\ufe0f Отчёт МОНОЛИТ vs ВсеИнструменты: не удалось запустить браузер "
-                 "для сбора цен (CDP:9222 не поднялся). Зайдите на рабочую машину и проверьте Chrome.")
-        return 2
     all_prod={}; mono_prod=[]
-    with sync_playwright() as p:
-        b=p.chromium.connect_over_cdp(CDP)
-        ctx=b.contexts[0] if b.contexts else b.new_context()
-        for grp,pages,is_mono in (('LEIYA',LEIYA_PAGES,False),('MO-L',MOL_PAGES,False),('MONO',MONO_PAGES,True)):
-            for u in pages:
-                prods,blocked=scrape_page(ctx,u)
-                if blocked:
-                    log(f"БЛОКИРОВКА/КАПЧА на {u} (группа {grp}). Прекращаю без перезаписи данных.")
-                    log("CAPTCHA")
-                    tg_alert("\u26a0\ufe0f Отчёт МОНОЛИТ vs ВсеИнструменты: сайт vseinstrumenti.ru "
-                             "требует пройти капчу. Зайдите в браузер на рабочей машине и пройдите "
-                             "проверку, чтобы возобновить ежедневный сбор цен.")
-                    return 2
-                log(f"{grp}: {u} -> {len(prods)} товаров")
-                for pr in prods:
-                    all_prod[pr['code']]=pr
-                    if is_mono: mono_prod.append(pr)
+    # ПРИОРИТЕТ 1: данные, присланные (пуш) с внешнего «хорошего-IP» хоста.
+    remote=load_remote_vi()
+    if remote is REMOTE_BLOCKED:
+        log("БЛОКИРОВКА/КАПЧА на внешнем хосте (пуш blocked=true). Прекращаю без перезаписи данных.")
+        log("CAPTCHA")
+        tg_alert("\u26a0\ufe0f Отчёт МОНОЛИТ vs ВсеИнструменты: внешний хост сбора цен "
+                 "наткнулся на капчу vseinstrumenti.ru. Зайдите в браузер на том хосте и "
+                 "пройдите проверку, чтобы возобновить ежедневный сбор цен.")
+        return 2
+    if remote is not None:
+        all_prod, mono_prod = remote
+        log("источник данных ВИ: удалённый хост (пуш) — пропускаю ensure_chrome и локальный скрейп")
+    else:
+        # ПРИОРИТЕТ 2 (fallback): локальный сбор через уже открытый Chrome (CDP:9222).
+        log("источник данных ВИ: локальный скрейп через Chrome CDP (пуш отсутствует/протух)")
+        # Автоподъём браузера: если Chrome с CDP на 9222 не запущен (типично при
+        # автозапуске по расписанию) — поднимаем сами, чтобы не падать с ECONNREFUSED.
+        if not ensure_chrome():
+            log("Браузер недоступен (CDP:9222 не отвечает). Прекращаю без перезаписи данных.")
+            tg_alert("\u26a0\ufe0f Отчёт МОНОЛИТ vs ВсеИнструменты: не удалось запустить браузер "
+                     "для сбора цен (CDP:9222 не поднялся). Зайдите на рабочую машину и проверьте Chrome.")
+            return 2
+        with sync_playwright() as p:
+            b=p.chromium.connect_over_cdp(CDP)
+            ctx=b.contexts[0] if b.contexts else b.new_context()
+            for grp,pages,is_mono in (('LEIYA',LEIYA_PAGES,False),('MO-L',MOL_PAGES,False),('MONO',MONO_PAGES,True)):
+                for u in pages:
+                    prods,blocked=scrape_page(ctx,u)
+                    if blocked:
+                        log(f"БЛОКИРОВКА/КАПЧА на {u} (группа {grp}). Прекращаю без перезаписи данных.")
+                        log("CAPTCHA")
+                        tg_alert("\u26a0\ufe0f Отчёт МОНОЛИТ vs ВсеИнструменты: сайт vseinstrumenti.ru "
+                                 "требует пройти капчу. Зайдите в браузер на рабочей машине и пройдите "
+                                 "проверку, чтобы возобновить ежедневный сбор цен.")
+                        return 2
+                    log(f"{grp}: {u} -> {len(prods)} товаров")
+                    for pr in prods:
+                        all_prod[pr['code']]=pr
+                        if is_mono: mono_prod.append(pr)
     # vi_fresh.json — свежие цены/наличие ВИ по коду (для Leiya/MO-L/Monolit)
     json.dump(all_prod, open(os.path.join(TMP,'vi_fresh.json'),'w'), ensure_ascii=False, indent=1)
     # mono_tool_p1/p2 в формате, который ждёт build_report (litr/ast)
