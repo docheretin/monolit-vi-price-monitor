@@ -36,6 +36,22 @@ INGEST_TOKEN = os.environ.get('INGEST_TOKEN','').strip()
 HEADLESS     = os.environ.get('HEADLESS','0').strip() in ('1','true','True','yes')
 PROFILE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)),'rf_profile')
 
+# --- прокси (жилой/мобильный РФ-IP) — обходит блокировку ServicePipe по -----
+# --- датацентровому IP. Пусто = без прокси (прямое подключение). ------------
+PROXY_SERVER = os.environ.get('PROXY_SERVER','').strip()   # напр. http://host:port или socks5://host:port
+PROXY_USER   = os.environ.get('PROXY_USER','').strip()
+PROXY_PASS   = os.environ.get('PROXY_PASS','').strip()
+
+def _proxy_cfg():
+    if not PROXY_SERVER:
+        return None
+    cfg = {"server": PROXY_SERVER}
+    if PROXY_USER:
+        cfg["username"] = PROXY_USER
+    if PROXY_PASS:
+        cfg["password"] = PROXY_PASS
+    return cfg
+
 # --- те же страницы, что и на VM (дублируем для автономности пакета) -------
 LEIYA_PAGES=["https://www.vseinstrumenti.ru/brand/leiya-2104793/",
              "https://www.vseinstrumenti.ru/brand/leiya-2104793/page2/",
@@ -133,8 +149,11 @@ def collect():
     from playwright.sync_api import sync_playwright
     all_prod = {}; mono_codes = []
     with sync_playwright() as p:
+        _px = _proxy_cfg()
+        if _px:
+            log(f"используется прокси: {PROXY_SERVER}")
         ctx = p.chromium.launch_persistent_context(
-            PROFILE_DIR, headless=HEADLESS,
+            PROFILE_DIR, headless=HEADLESS, proxy=_px,
             args=['--no-first-run','--no-default-browser-check','--disable-background-networking'])
         try:
             pg = _vi_page(ctx)
